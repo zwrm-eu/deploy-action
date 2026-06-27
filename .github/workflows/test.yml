@@ -1,0 +1,41 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run actionlint
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color
+
+  smoke:
+    name: smoke (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # Run the action itself. The deploy step is expected to fail because the
+      # working directory has no zwrm.toml — continue-on-error swallows that so
+      # the next step can assert the install half (download + checksum + PATH on
+      # $GITHUB_PATH) really worked, with no secret or control plane required.
+      - name: Run action (install half; deploy expected to fail)
+        continue-on-error: true
+        uses: ./
+        with:
+          api-token: dummy-token-not-used
+          working-directory: ${{ runner.temp }}
+      - name: Verify CLI installed and on PATH
+        run: zwrm --version

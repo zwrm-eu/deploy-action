@@ -1,0 +1,27 @@
+# Example consumer workflow.
+# Copy this into your app repo at .github/workflows/deploy.yml.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Avoid overlapping deploys of the same branch.
+concurrency:
+  group: zwrm-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to ZWRM
+        uses: zwrm-eu/deploy-action@v1
+        with:
+          api-token: ${{ secrets.ZWRM_API_TOKEN }}
+          org-id: my-org
+          # Pin for reproducible CI; drop to track latest.
+          cli-version: v0.11.13

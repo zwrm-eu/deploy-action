@@ -1,0 +1,33 @@
+name: release
+
+# Keeps the moving major-version tag (e.g. v1) pointed at the latest matching
+# release (e.g. v1.2.3), so consumers can pin `zwrm-eu/deploy-action@v1`.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  update-major-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Move major version tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          case "${TAG}" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "Tag '${TAG}' is not a vMAJOR.MINOR.PATCH release tag; skipping."; exit 0 ;;
+          esac
+          major="${TAG%%.*}"   # v1.2.3 -> v1
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "${major}" "${TAG}"
+          git push -f origin "refs/tags/${major}"
+          echo "Updated ${major} -> ${TAG}"

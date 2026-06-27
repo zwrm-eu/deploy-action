@@ -1,0 +1,9 @@
+# Editor / OS cruft
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Local test artifacts
+zwrm
+*.log

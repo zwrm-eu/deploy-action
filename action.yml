@@ -1,0 +1,122 @@
+name: "Deploy to ZWRM"
+description: "Build and deploy an application to a ZWRM control plane with zwrm deploy."
+author: "ZWRM"
+branding:
+  icon: "upload-cloud"
+  color: "blue"
+
+inputs:
+  api-token:
+    description: "ZWRM API token. Create one with `zwrm auth tokens create` and store it as a repository or organization secret."
+    required: true
+  org-id:
+    description: "Organization slug or ID. Maps to ZWRM_ORG_ID. Optional if your token resolves to a single org."
+    required: false
+    default: ""
+  app:
+    description: "Application name. Defaults to app.name in zwrm.toml."
+    required: false
+    default: ""
+  control-plane-url:
+    description: "Control plane API URL."
+    required: false
+    default: "https://zwrm.io"
+  working-directory:
+    description: "Directory containing zwrm.toml. The deploy runs from here."
+    required: false
+    default: "."
+  context:
+    description: "Build context directory. Defaults to working-directory."
+    required: false
+    default: ""
+  force-build:
+    description: "Force a rebuild, bypassing the build cache."
+    required: false
+    default: "false"
+  cli-version:
+    description: "zwrm CLI version to install: a pinned tag like 'v0.11.13', or 'latest'."
+    required: false
+    default: "latest"
+  release-base-url:
+    description: "Base URL for the zwrm release server. Override for canary channels or self-hosted mirrors."
+    required: false
+    default: "https://releases.zwrm.eu/zwrmd"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install zwrm CLI
+      shell: bash
+      env:
+        BASE_URL: ${{ inputs.release-base-url }}
+        CLI_VERSION: ${{ inputs.cli-version }}
+      run: |
+        set -euo pipefail
+
+        case "${RUNNER_OS}" in
+          Linux)  os=linux  ;;
+          macOS)  os=darwin ;;
+          *) echo "::error::Unsupported runner OS '${RUNNER_OS}'. This action supports Linux and macOS runners."; exit 1 ;;
+        esac
+        case "${RUNNER_ARCH}" in
+          X64)   arch=amd64 ;;
+          ARM64) arch=arm64 ;;
+          *) echo "::error::Unsupported runner arch '${RUNNER_ARCH}'. This action supports X64 and ARM64 runners."; exit 1 ;;
+        esac
+
+        version="${CLI_VERSION}"
+        if [ "${version}" = "latest" ]; then
+          version="$(curl -fsSL "${BASE_URL}/latest" | tr -d '[:space:]')"
+          if [ -z "${version}" ]; then
+            echo "::error::Could not resolve the latest zwrm version from ${BASE_URL}/latest."
+            exit 1
+          fi
+        fi
+        # Normalise to a leading 'v' so 'v0.11.13' and '0.11.13' both work.
+        case "${version}" in v*) ;; *) version="v${version}" ;; esac
+
+        bin="zwrm-${os}-${arch}"
+        dir="${RUNNER_TEMP}/zwrm-cli"
+        mkdir -p "${dir}"
+
+        echo "Installing zwrm ${version} (${bin})"
+        curl -fsSL "${BASE_URL}/${version}/${bin}"        -o "${dir}/zwrm"
+        curl -fsSL "${BASE_URL}/${version}/checksums.txt" -o "${dir}/checksums.txt"
+
+        expected="$(awk -v b="${bin}" '$2 == b {print $1}' "${dir}/checksums.txt")"
+        if [ -z "${expected}" ]; then
+          echo "::error::No checksum for ${bin} in ${BASE_URL}/${version}/checksums.txt"
+          exit 1
+        fi
+        if command -v sha256sum >/dev/null 2>&1; then
+          actual="$(sha256sum "${dir}/zwrm" | awk '{print $1}')"
+        else
+          actual="$(shasum -a 256 "${dir}/zwrm" | awk '{print $1}')"
+        fi
+        if [ "${actual}" != "${expected}" ]; then
+          echo "::error::Checksum mismatch for ${bin}: expected ${expected}, got ${actual}"
+          exit 1
+        fi
+
+        chmod +x "${dir}/zwrm"
+        echo "${dir}" >> "${GITHUB_PATH}"
+        "${dir}/zwrm" --version
+
+    - name: zwrm deploy
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        ZWRM_API_TOKEN: ${{ inputs.api-token }}
+        ZWRM_ORG_ID: ${{ inputs.org-id }}
+        CONTROL_PLANE_URL: ${{ inputs.control-plane-url }}
+        APP: ${{ inputs.app }}
+        CONTEXT: ${{ inputs.context }}
+        FORCE_BUILD: ${{ inputs.force-build }}
+      run: |
+        set -euo pipefail
+        args=(deploy --api-url "${CONTROL_PLANE_URL}")
+        if [ -n "${APP}" ]; then args+=(--app "${APP}"); fi
+        if [ -n "${CONTEXT}" ]; then args+=(--context "${CONTEXT}"); fi
+        if [ "${FORCE_BUILD}" = "true" ]; then args+=(--force-build); fi
+        echo "Running: zwrm ${args[*]}"
+        zwrm "${args[@]}"
